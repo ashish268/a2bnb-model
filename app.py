@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import pickle
 
-
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
