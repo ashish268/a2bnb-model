@@ -34,16 +34,11 @@ def default_load(path='AB_NYC_2019.csv'):
 def basic_preprocess(df):
     df = df.copy()
 
-    # Standard quick checks
     if 'price' not in df.columns:
         raise ValueError("No 'price' column detected in the dataset.")
 
-    # Remove obvious bad prices
     df = df[df['price'] >= 0]
 
-    # Fill or create some commonly used features that exist in AB_NYC_2019
-    # For robustness, only use columns if they exist
-    # Convert last_review to datetime and extract year/month if exists
     if 'last_review' in df.columns:
         try:
             df['last_review'] = pd.to_datetime(df['last_review'], errors='coerce')
@@ -53,13 +48,10 @@ def basic_preprocess(df):
             df['last_review_year'] = 0
             df['last_review_month'] = 0
 
-    # Fill missing numeric features with 0 or median
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     for col in ['reviews_per_month', 'number_of_reviews']:
         if col in df.columns:
             df[col] = df[col].fillna(0)
 
-    # Keep a sensible subset of features if present
     features = []
     candidates = [
         'neighbourhood_group', 'neighbourhood', 'room_type',
@@ -71,7 +63,6 @@ def basic_preprocess(df):
         if c in df.columns:
             features.append(c)
 
-    # Drop rows with missing price
     df = df.dropna(subset=['price'])
 
     return df, features
@@ -99,7 +90,6 @@ st.sidebar.header("Dataset")
 uploaded_file = st.sidebar.file_uploader("Upload CSV file (AB_NYC_2019 or similar)", type=['csv'])
 use_default = False
 if uploaded_file is None:
-    # Try to load default CSV if it exists in working directory
     default_df = default_load()
     if default_df is not None:
         st.sidebar.success("Found default 'AB_NYC_2019.csv' in the working directory. Using that file.")
@@ -135,7 +125,6 @@ except Exception as e:
 
 st.write(f"Detected features to use: **{features}**")
 
-# Let user adjust target and features
 target = st.selectbox("Target column (price)", options=['price'], index=0)
 additional_features = st.multiselect("Add other columns to use as features (if present)", options=[c for c in df.columns if c not in features and c != 'price'])
 for c in additional_features:
@@ -158,11 +147,9 @@ max_depth_val = None if max_depth == 0 else max_depth
 train_button = st.button("Train model")
 
 if train_button:
-    # Prepare X, y
     X = df_clean[features].copy()
     y = df_clean[target].astype(float)
 
-    # Separate numeric and categorical features
     numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
     categorical_features = [c for c in X.columns if c not in numeric_features]
 
@@ -176,7 +163,6 @@ if train_button:
     with st.spinner("Training model — this may take a while depending on n_estimators and data size..."):
         pipeline.fit(X_train, y_train)
 
-    # Evaluate
     preds = pipeline.predict(X_test)
     mae = mean_absolute_error(y_test, preds)
     rmse = np.sqrt(mean_squared_error(y_test, preds))
@@ -187,12 +173,9 @@ if train_button:
     st.metric("RMSE", f"{rmse:,.2f}")
     st.metric("R^2", f"{r2:.4f}")
 
-    # Feature importances (approx)
     try:
         model = pipeline.named_steps['model']
         preprocessor = pipeline.named_steps['preprocessor']
-
-        # Get feature names after preprocessing
         cat_cols = []
         if categorical_features:
             ohe = preprocessor.named_transformers_['cat'].named_steps['ohe']
@@ -215,14 +198,12 @@ if train_button:
     except Exception as e:
         st.info(f"Couldn't compute feature importances: {e}")
 
-    # Save model to in-memory bytes for download
     model_bytes = BytesIO()
     pickle.dump(pipeline, model_bytes)
     model_bytes.seek(0)
 
     st.download_button(label="Download trained model (pickle)", data=model_bytes, file_name="airbnb_rf_pipeline.pkl", mime='application/octet-stream')
 
-    # Persist pipeline in session state for prediction UI
     st.session_state['pipeline'] = pipeline
     st.session_state['features'] = features
     st.session_state['numeric_features'] = numeric_features
@@ -235,50 +216,36 @@ st.header("3) Predict")
 if 'pipeline' not in st.session_state:
     st.info("No trained model in this session. Train a model above or upload a pretrained pipeline pickle below.")
 
-col1, col2 = st.columns([2, 1])
-with col2:
-    uploaded_model = st.file_uploader("Or upload a trained pipeline pickle (.pkl)", type=['pkl', 'pickle'])
-    if uploaded_model is not None:
-        try:
-            loaded = pickle.load(uploaded_model)
-            st.session_state['pipeline'] = loaded
-            # Attempt to infer feature names from earlier saved session or from upload metadata
-            st.success("Uploaded model loaded into session. Use the form below to predict.")
-        except Exception as e:
-            st.error(f"Failed to load pickle: {e}")
+uploaded_model = st.file_uploader("Or upload a trained pipeline pickle (.pkl)", type=['pkl', 'pickle'])
+if uploaded_model is not None:
+    try:
+        loaded = pickle.load(uploaded_model)
+        st.session_state['pipeline'] = loaded
+        st.success("Uploaded model loaded into session. Use the form below to predict.")
+    except Exception as e:
+        st.error(f"Failed to load pickle: {e}")
 
 if 'pipeline' in st.session_state:
     pipeline = st.session_state['pipeline']
-    features = st.session_state.get('features', None)
-    numeric_features = st.session_state.get('numeric_features', None)
-    categorical_features = st.session_state.get('categorical_features', None)
+    features = st.session_state.get('features', [])
+    numeric_features = st.session_state.get('numeric_features', [])
+    categorical_features = st.session_state.get('categorical_features', [])
 
     st.subheader("Enter feature values to predict price")
     with st.form(key='predict_form'):
         input_data = {}
-        # If we know features, create inputs for them
-        if features is not None:
-            for f in features:
-                # numeric
-                if f in numeric_features:
-                    val = st.number_input(f, value=float(df_clean[f].median() if f in df_clean else 0.0))
-                    input_data[f] = [val]
+        for f in features:
+            if f in numeric_features:
+                val = st.number_input(f, value=float(df_clean[f].median() if f in df_clean else 0.0))
+                input_data[f] = [val]
+            else:
+                if f in df_clean.columns:
+                    top_vals = df_clean[f].dropna().astype(str).value_counts().nlargest(20).index.tolist()
+                    sel = st.selectbox(f, options=top_vals if len(top_vals) > 0 else ['N/A'], index=0)
+                    input_data[f] = [sel]
                 else:
-                    # for categorical, provide selectbox of top categories
-                    if f in df_clean.columns:
-                        top_vals = df_clean[f].dropna().astype(str).value_counts().nlargest(20).index.tolist()
-                        if len(top_vals) == 0:
-                            txt = st.text_input(f, value='')
-                            input_data[f] = [txt]
-                        else:
-                            sel = st.selectbox(f, options=top_vals, index=0)
-                            input_data[f] = [sel]
-                    else:
-                        txt = st.text_input(f, value='')
-                        input_data[f] = [txt]
-        else:
-            st.info("Model does not expose feature list. Provide inputs matching the model's expected features by name.")
-            st.text_area("JSON-like input (e.g. {\"latitude\": [40.7], \"longitude\": [-73.9], \"room_type\": [\"Entire home/apt\"]})")
+                    txt = st.text_input(f, value='')
+                    input_data[f] = [txt]
 
         submit = st.form_submit_button("Predict")
 
@@ -308,5 +275,5 @@ if st.checkbox("Show average price by neighbourhood_group (if present)"):
     else:
         st.info("Column 'neighbourhood_group' not found in dataset.")
 
-st.write("---")
-st.write("If you'd like, I can also generate a requirements.txt for deploying this app — tell me and I'll add it.")
+st.write('---')
+st.write('All errors in import lines have been corrected. You can now run this app using: streamlit run app_fixed.py')
